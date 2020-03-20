@@ -25,10 +25,8 @@
 namespace retinanet {
 namespace cuda {
 
-int nms(int batchSize,
+int iou(
     const void *const *inputs, void **outputs,
-    size_t count, int detections_per_im, float nms_thresh,
-    void *workspace, size_t workspace_size, cudaStream_t stream);
-
+    int num_boxes, int num_anchors, cudaStream_t stream);
 }
 }

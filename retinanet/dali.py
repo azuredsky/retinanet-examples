@@ -1,13 +1,9 @@
-import os
 from contextlib import redirect_stdout
 from math import ceil
 import ctypes
-import numpy as np
 import torch
-import numpy as np
 from nvidia.dali import pipeline, ops, types
 from pycocotools.coco import COCO
-
 
 class COCOPipeline(pipeline.Pipeline):
     'Dali pipeline for COCO'
@@ -19,11 +15,11 @@ class COCOPipeline(pipeline.Pipeline):
                  augment_saturation=0.0):
         super().__init__(batch_size=batch_size, num_threads=num_threads, device_id=device_id,
                          prefetch_queue_depth=num_threads, seed=42)
-
         self.path = path
         self.training = training
         self.stride = stride
         self.iter = 0
+
         self.rotate_augment = rotate_augment
         self.augment_brightness = augment_brightness
         self.augment_contrast = augment_contrast
@@ -42,10 +38,14 @@ class COCOPipeline(pipeline.Pipeline):
         self.bbox_flip = ops.BbFlip(device='cpu', ltrb=True)
         self.img_flip = ops.Flip(device='gpu')
         self.coin_flip = ops.CoinFlip(probability=0.5)
-        self.brightness = ops.Brightness(device='gpu')
-        self.contrast = ops.Contrast(device='gpu')
-        self.hue = ops.Hue(device='gpu')
-        self.saturation = ops.Saturation(device='gpu')
+        self.bc = ops.BrightnessContrast(device='gpu')
+        self.hsv = ops.Hsv(device='gpu')
+
+        # Random number generation for augmentation
+        self.brightness_dist = ops.NormalDistribution(mean=1.0, stddev=augment_brightness)
+        self.contrast_dist = ops.NormalDistribution(mean=1.0, stddev=augment_contrast)
+        self.hue_dist = ops.NormalDistribution(mean=0.0, stddev=augment_hue)
+        self.saturation_dist = ops.NormalDistribution(mean=1.0, stddev=augment_saturation)
 
         if rotate_augment:
             raise RuntimeWarning("--augment-rotate current has no effect when using the DALI data loader.")
@@ -77,25 +77,10 @@ class COCOPipeline(pipeline.Pipeline):
             bboxes = self.bbox_flip(bboxes, horizontal=flip)
             images = self.img_flip(images, horizontal=flip)
 
-            if self.augment_brightness:
-                brightness_factor = random.normalvariate(1, self.augment_brightness)
-                brightness_factor = max(0, brightness_factor)
-                images = self.brightness(images, brightness=brightness_factor)
-            if self.augment_contrast:
-                contrast_factor = random.normalvariate(1, self.augment_contrast)
-                contrast_factor = max(0, contrast_factor)
-                images = self.contrast(images, contrast=contrast_factor)
-            if self.augment_hue:
-                hue_factor = random.normalvariate(0, self.augment_hue)
-                hue_factor = max(-0.5, hue_factor)
-                hue_factor = min(0.5, hue_factor)
-                images = self.hue(images, hue=hue_factor)
-            if self.augment_saturation:
-                saturation_factor = random.normalvariate(1, self.augment_saturation)
-                saturation_factor = max(0, saturation_factor)
-                images = self.saturation(images, saturation=saturation_factor)
-
-
+            if self.augment_brightness or self.augment_contrast:
+                images = self.bc(images, brightness=self.brightness_dist(), contrast=self.contrast_dist())
+            if self.augment_hue or self.augment_saturation:
+                images = self.hsv(images, hue=self.hue_dist(), saturation=self.saturation_dist())
 
         else:
             images = self.decode_infer(images)
@@ -215,3 +200,4 @@ class DaliDataIterator():
                 ratios = torch.Tensor(ratios).cuda(non_blocking=True)
 
                 yield data, ids, ratios
+
